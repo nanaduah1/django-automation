@@ -11,7 +11,7 @@ from django.db import connection
 from django.db.models import F
 from django.utils import timezone
 
-from automation.models import Job
+from .models import Job
 
 logger = settings.LOGGER
 
