@@ -1,9 +1,11 @@
+import importlib
 import json
 import os
+import pkgutil
 import threading
 from dataclasses import dataclass
-from datetime import timedelta
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Dict, Optional, cast
 from typing import Tuple
 
 from django.conf import settings
@@ -14,7 +16,7 @@ from django.utils import timezone
 from .models import Job
 
 logger = settings.LOGGER
-
+job_package = getattr(settings,'JOBS_PACKAGE','jobs')
 
 @dataclass
 class RunResult:
@@ -24,6 +26,9 @@ class RunResult:
 
 
 class AutomationBase(object):
+    class Meta:
+        abstract = True
+
     # Uniquely identifies a job type
     key = None
 
@@ -111,15 +116,21 @@ class AutomationBase(object):
 
 
 class Worker(AutomationBase):
+    class Meta:
+        abstract = True
 
     # The interval in at which this worker repeats
     # When this is not none, the class becomes a cron-like background
     # Task that repeats itself
     repeat_interval: timedelta = timedelta(minutes=5)
 
+    # Silent workers will not record their runs in the database
+    # When this flag is True, the database logs are suppressed
+    run_silent = False
+
     def execute(self):
         results = super().execute()
-        if self.repeat_interval and self.repeat_interval is timedelta:
+        if not self.run_silent and self.repeat_interval and self.repeat_interval is timedelta:
             self.job.reschedule(timezone.now() + self.repeat_interval)
 
         return results
@@ -129,7 +140,8 @@ class Worker(AutomationBase):
         """
         Creates a new instance of this worker Job if none exists already
         """
-        if Job.objects.filter(
+
+        if cls.run_silent or Job.objects.filter(
             type_key=cls.key,
             status__in=(
                 Job.STATUS_FAILED_WITH_RETRY,
@@ -142,52 +154,100 @@ class Worker(AutomationBase):
         Worker.schedule_job(cls.repeat_interval)
 
 
-def _find_processor_class_by_key(job_type_key: str) -> AutomationBase:
+class WorkerEngine:
+    def __init__(self) -> None:
+        self.schedules:Dict[Worker, datetime] = {}
+        self.jobs = {}
 
-    # IMPORTANT: We are lazily loading this module to avoid circular dependency
-    from automation.processors.factory import get_all_automation_jobs
+    def __subclasses_recursive(self, cls):
+        direct = cls.__subclasses__()
+        indirect = []
+        for subclass in direct:
+            indirect.extend(self.__subclasses_recursive(subclass))
+        return set(direct + indirect)
 
-    mapping = get_all_automation_jobs()
-    return mapping.get(job_type_key)
+    def __get_all_automation_jobs(self, path:str, parent=""):
+        for (_, name, ispkg) in pkgutil.iter_modules([path]):
+            if ispkg:
+                self.__get_all_automation_jobs(os.path.join(path, name), parent=os.path.basename(path))
+            else:
+                packs = []
+                if parent:
+                    packs.append(parent)
+                packs =[*packs, os.path.basename(path), name]
+                module_name = ".".join(packs)
+                importlib.import_module(module_name, __package__)
+        
+        job_clasess = self.__subclasses_recursive(AutomationBase)
+        return {cls.key:cls for cls in job_clasess if cls.key}
 
 
-def initialize_workers():
-    # IMPORTANT: We are lazily loading this module to avoid circular dependency
-    from automation.processors.factory import get_all_automation_jobs
+    def _find_processor_class_by_key(self,job_type_key: str) -> AutomationBase:
+        return self.jobs.get(job_type_key)
 
-    workers: Tuple[Worker] = tuple(
-        w for w in get_all_automation_jobs().values() if w is Worker
-    )
-    for worker in workers:
-        worker.start()
-        logger.info(f"{worker.key} initialized!")
+    def initialize_jobs(self,job_package=job_package) -> Dict[str,AutomationBase]:
+        pkg_dir = os.path.join(settings.BASE_DIR, job_package)
+        self.jobs = self.__get_all_automation_jobs(pkg_dir)
+        self.initialize_workers()
 
-    logger.info(f"{len(workers)} Found and initialized!")
+    def initialize_workers(self):
+        workers: Tuple[Worker] = tuple(
+            w for w in self.jobs.values() if issubclass(w,Worker)
+        )
+        for worker in workers:
+            worker.start()
+            logger.info(f"{worker.key} initialized!")
+
+        logger.info(f"{len(workers)} Found and initialized!")
 
 
-def run_automations():
-    from automation.management.commands.run_job import CONFIG
+    def __run_silent_workers(self):
+        silent_workers:Tuple[Worker] = tuple(job for job in self.jobs.values() 
+            if issubclass(job,Worker) and cast(Worker,job).run_silent is True)
 
-    time_now = timezone.now()
-    maximum_jobs = int(CONFIG.get("JOB_BATCH_SIZE", "100"))
+        for worker in silent_workers:
+            worker_obj:Worker = worker(Job(pk=0))
+            next_run = self.schedules.get(worker,None)
+            if next_run and next_run <= timezone.now():
+                print(f"Executing {worker}")
+                worker_obj.execute()
+            elif next_run is not None:
+                print(f"Skipping {worker} till {next_run}")
+                continue
+            
+            self.schedules[worker] = timezone.now() + worker.repeat_interval
+            
+            
 
-    jobs = Job.objects.filter(
-        status__in=(Job.STATUS_NEW, Job.STATUS_FAILED_WITH_RETRY),
-        run_at__lte=time_now,
-    ).order_by("id")[:maximum_jobs]
 
-    for job in jobs:
-        JobProcessorClass = _find_processor_class_by_key(job.type_key)
-        if JobProcessorClass is None:
-            logger.critical(f"Undefined job type key = {job.type_key}")
-            continue
+    def run_automations(self):
 
-        job_processor = JobProcessorClass(job)
-        try:
-            job_processor.execute()
-        except Exception as ex:
-            print(ex)
-            logger.exception(ex)
+        # Run the silent workers in a separate thread
+        silent_worker_thread = threading.Thread(target=self.__run_silent_workers)
+        silent_worker_thread.start()
 
-    # IMPORTANT: Close connection as django will not do it if we are not in a request
-    connection.close()
+        time_now = timezone.now()
+        maximum_jobs = 100
+
+        jobs = Job.objects.filter(
+            status__in=(Job.STATUS_NEW, Job.STATUS_FAILED_WITH_RETRY),
+            run_at__lte=time_now,
+        ).order_by("id")[:maximum_jobs]
+
+        for job in jobs:
+            JobProcessorClass = self._find_processor_class_by_key(job.type_key)
+            if JobProcessorClass is None:
+                logger.critical(f"Undefined job type key = {job.type_key}")
+                continue
+
+            job_processor = JobProcessorClass(job)
+            try:
+                job_processor.execute()
+            except Exception as ex:
+                print(ex)
+                logger.exception(ex)
+
+        # IMPORTANT: Close connection as django will not do it if we are not in a request
+        connection.close()
+
+        silent_worker_thread.join()

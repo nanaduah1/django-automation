@@ -12,12 +12,13 @@ CONFIG = settings.CONFIG_PROVIDER
 class Command(BaseCommand):
     def handle(self, *args, **options):
         logger.info("Automation is starting")
+        engine = common.WorkerEngine()
         try:
-            common.initialize_workers()
+            engine.initialize_jobs()
             while True:
                 time.sleep(int(CONFIG.get("SCHEDULER_RUN_INTERVAL_SECONDS", "10")))
                 try:
-                    common.run_automations()
+                    engine.run_automations()
                 except KeyboardInterrupt:
                     break
                 except Exception as ex:
