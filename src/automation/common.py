@@ -26,9 +26,6 @@ class RunResult:
 
 
 class AutomationBase(object):
-    class Meta:
-        abstract = True
-
     # Uniquely identifies a job type
     key = None
 
@@ -116,9 +113,6 @@ class AutomationBase(object):
 
 
 class Worker(AutomationBase):
-    class Meta:
-        abstract = True
-
     # The interval in at which this worker repeats
     # When this is not none, the class becomes a cron-like background
     # Task that repeats itself
