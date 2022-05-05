@@ -51,8 +51,9 @@ class AutomationBase(object):
             status=Job.STATUS_RUNNING,
             started_at=timezone.now(),
         )
-        self.job.refresh_from_db()
-
+        if self.job.pk:
+            self.job.refresh_from_db()
+            
         try:
             results = self.on_execute()
         except Exception as ex:
@@ -84,7 +85,8 @@ class AutomationBase(object):
             times_executed=F("times_executed") + 1,
         )
 
-        self.job.refresh_from_db()
+        if self.job.pk:
+            self.job.refresh_from_db()
 
     def on_execute(self) -> RunResult:
         raise NotImplementedError()
