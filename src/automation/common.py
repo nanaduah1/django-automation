@@ -51,6 +51,7 @@ class AutomationBase(object):
             status=Job.STATUS_RUNNING,
             started_at=timezone.now(),
         )
+        self.job.refresh_from_db()
 
         try:
             results = self.on_execute()
@@ -82,6 +83,8 @@ class AutomationBase(object):
             fail_reason=fail_reason,
             times_executed=F("times_executed") + 1,
         )
+
+        self.job.refresh_from_db()
 
     def on_execute(self) -> RunResult:
         raise NotImplementedError()
