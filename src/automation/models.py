@@ -42,7 +42,7 @@ class Job(models.Model):
     def metadata(self, value: dict):
         self._metadata = json.dumps(value)
 
-    def reschedule(self, time: datetime):
+    def repeat_schedule(self, time: datetime):
         Job.objects.create(
             run_at=time, type_key=self.type_key, _metadata=self._metadata
         )

@@ -126,11 +126,10 @@ class Worker(AutomationBase):
         return timezone.now() + cls.repeat_interval
 
     def execute(self):
-        results = super().execute()
-        if not self.run_silent and self.repeat_interval and isinstance(self.repeat_interval,timedelta):
-            self.job.reschedule(self.next_run())
+        super().execute()
+        if self.job.status in (Job.STATUS_COMPLETED, Job.STATUS_FAILED) and not self.run_silent and self.repeat_interval and isinstance(self.repeat_interval,timedelta):
+            self.job.repeat_schedule(self.next_run())
 
-        return results
 
     @classmethod
     def start(cls):
