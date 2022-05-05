@@ -4,7 +4,7 @@ import os
 import pkgutil
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import Dict, Optional, cast
 from typing import Tuple
 
@@ -88,7 +88,6 @@ class AutomationBase(object):
 
     @classmethod
     def schedule_job(cls, delay: timedelta = None, **kwargs) -> Job:
-
         delay = delay or timedelta(seconds=1)
         model = cls.model
 
@@ -122,10 +121,14 @@ class Worker(AutomationBase):
     # When this flag is True, the database logs are suppressed
     run_silent = False
 
+    @classmethod
+    def next_run(cls):
+        return timezone.now() + cls.repeat_interval
+
     def execute(self):
         results = super().execute()
-        if not self.run_silent and self.repeat_interval and self.repeat_interval is timedelta:
-            self.job.reschedule(timezone.now() + self.repeat_interval)
+        if not self.run_silent and self.repeat_interval and isinstance(self.repeat_interval,timedelta):
+            self.job.reschedule(self.next_run())
 
         return results
 
@@ -145,7 +148,7 @@ class Worker(AutomationBase):
         ).exists():
             return
 
-        Worker.schedule_job(cls.repeat_interval)
+        cls.schedule_job(cls.next_run()-timezone.now())
 
 
 class WorkerEngine:
@@ -203,13 +206,11 @@ class WorkerEngine:
             worker_obj:Worker = worker(Job(pk=0))
             next_run = self.schedules.get(worker,None)
             if next_run and next_run <= timezone.now():
-                print(f"Executing {worker}")
                 worker_obj.execute()
             elif next_run is not None:
-                print(f"Skipping {worker} till {next_run}")
                 continue
             
-            self.schedules[worker] = timezone.now() + worker.repeat_interval
+            self.schedules[worker] = worker.next_run()
             
             
 
