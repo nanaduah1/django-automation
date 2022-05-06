@@ -18,6 +18,7 @@ from .models import Job
 logger = settings.LOGGER
 job_package = getattr(settings,'JOBS_PACKAGE','jobs')
 
+
 @dataclass
 class RunResult:
     success: bool = False
@@ -158,6 +159,17 @@ class Worker(AutomationBase):
         cls.schedule_job(cls.next_run()-timezone.now())
 
 
+class TimeBasedWorker(Worker):
+    run_at = time(8, 30)
+
+    @classmethod
+    def next_run(cls):
+        next_from_now = timezone.now().replace(
+            hour=cls.run_at.hour, minute=cls.run_at.minute
+        )
+        return next_from_now + cls.repeat_interval
+
+
 class WorkerEngine:
     def __init__(self) -> None:
         self.schedules:Dict[Worker, datetime] = {}
@@ -192,9 +204,7 @@ class WorkerEngine:
     def initialize_jobs(self,job_package=job_package) -> Dict[str,AutomationBase]:
         pkg_dir = os.path.join(settings.BASE_DIR, job_package)
         self.jobs = self.__get_all_automation_jobs(pkg_dir)
-        self.initialize_workers()
-
-    def initialize_workers(self):
+       
         workers: Tuple[Worker] = tuple(
             w for w in self.jobs.values() if issubclass(w,Worker)
         )
