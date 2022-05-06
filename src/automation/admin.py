@@ -4,4 +4,4 @@ from .models import Job
 
 @admin.register(Job)
 class JobAdmin(admin.ModelAdmin):
-    filters = ("type_key", "status", "run_at")
+    list_filter = ("type_key", "status", "run_at")
