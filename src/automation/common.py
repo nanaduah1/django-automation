@@ -132,7 +132,10 @@ class Worker(AutomationBase):
 
     def execute(self):
         super().execute()
-        if self.job.status in (Job.STATUS_COMPLETED, Job.STATUS_FAILED) and not self.run_silent and self.repeat_interval and isinstance(self.repeat_interval,timedelta):
+        if (self.job.status in (Job.STATUS_COMPLETED, Job.STATUS_FAILED) 
+            and not self.run_silent and self.repeat_interval 
+            and isinstance(self.repeat_interval,timedelta)
+        ):
             self.job.repeat_schedule(self.next_run())
 
 
