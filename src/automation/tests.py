@@ -5,6 +5,10 @@ from automation.models import Job
 class WorkerTestMixin:
     worker_class = None
 
+    def assertNoError(self):
+        self.assertEqual(self.job.status, Job.STATUS_COMPLETED)
+        self.assertTrue(self.job.fail_reason is None)
+
     def setUp(self) -> None:
         super().setUp()
         assert self.worker_class is not None
@@ -14,6 +18,6 @@ class WorkerTestMixin:
 
     def test_worker_runs_successfully(self):
         self.worker.execute()
-        self.assertEqual(self.job.status, Job.STATUS_COMPLETED)
+        self.assertNoError()
 
 
