@@ -161,13 +161,25 @@ class Worker(AutomationBase):
 
 class TimeBasedWorker(Worker):
     run_at = time(8, 30)
+    run_on_days = None
 
     @classmethod
     def next_run(cls):
         next_from_now = timezone.now().replace(
             hour=cls.run_at.hour, minute=cls.run_at.minute
         )
-        return next_from_now + cls.repeat_interval
+        next_run_datetime = next_from_now + cls.repeat_interval
+
+        return cls._get_next_run_date(next_run_datetime)
+
+    @classmethod
+    def _get_next_run_date(cls, next_run_at:datetime):
+        if not cls.run_on_days:
+            return next_run_at
+        elif next_run_at.weekday() in cls.run_on_days:
+            return next_run_at
+        else: return cls._get_next_run_date(next_run_at + cls.repeat_interval)
+
 
 
 class WorkerEngine:
